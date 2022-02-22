@@ -10,32 +10,66 @@ import org.gradle.api.artifacts.component.ComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentSelector
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.attributes.Category
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.ConfigurableFileTree
+import org.gradle.api.internal.artifacts.DefaultProjectComponentIdentifier
 import org.gradle.internal.component.local.model.OpaqueComponentArtifactIdentifier
 import org.gradle.internal.component.local.model.OpaqueComponentIdentifier
 
 /** Converts this [ResolvedDependencyResult] to group-artifact-version (GAV) coordinates in a tuple of (GA, V?). */
 internal fun ResolvedDependencyResult.toCoordinates(): Coordinates {
-  val compositeRequest = compositeRequest()
-  val selected = selected.id.toCoordinates()
-  return if (compositeRequest != null) {
-    IncludedBuildCoordinates.of(compositeRequest, selected as ProjectCoordinates)
-  } else {
-    selected
-  }
+  return compositeRequest() ?: selected.id.toCoordinates()
 }
 
-/** For a composite substitution, returns the requested coordinates. */
-private fun ResolvedDependencyResult.compositeRequest(): ModuleCoordinates? {
+/** If this is a composite substitution, returns it as such. We are about the request as well as the result. */
+private fun ResolvedDependencyResult.compositeRequest(): IncludedBuildCoordinates? {
   if (!selected.selectionReason.isCompositeSubstitution) return null
   val requestedModule = requested as? ModuleComponentSelector ?: return null
 
-  return ModuleCoordinates(
+  val requested = ModuleCoordinates(
     identifier = requestedModule.moduleIdentifier.toString(),
     resolvedVersion = requestedModule.version
+  )
+  val resolved = ProjectCoordinates((selected.id as ProjectComponentIdentifier).identityPath())
+
+  return IncludedBuildCoordinates.of(requested, resolved)
+}
+
+private fun ProjectComponentIdentifier.identityPath(): String {
+  return (this as? DefaultProjectComponentIdentifier)?.identityPath?.toString()
+    ?: error("${toCoordinates()} is not a DefaultProjectComponentIdentifier")
+}
+
+internal fun ResolvedArtifactResult.toCoordinates(): Coordinates {
+  val resolved = id.componentIdentifier.toCoordinates()
+
+  // Doesn't resolve to a project, so can't be an included build. Return as-is.
+  if (resolved !is ProjectCoordinates) return resolved
+
+  // may be a composite substitution
+  val identity = ProjectCoordinates((id.componentIdentifier as ProjectComponentIdentifier).identityPath())
+
+  // Identity path matches project path, so we assume this isn't resolved from an included build, and return as-is.
+  if (resolved == identity) return resolved
+
+  // At this point, we think this module has resolved from an included build.
+
+  // This is a very naive heuristic.
+  val requested = variant.capabilities.firstOrNull()?.run {
+    version?.let {
+      ModuleCoordinates(
+        identifier = "${group}:${name}",
+        resolvedVersion = it
+      )
+    }
+  } ?: return resolved
+
+  return IncludedBuildCoordinates.of(
+    requested = requested,
+    resolvedProject = identity
   )
 }
 

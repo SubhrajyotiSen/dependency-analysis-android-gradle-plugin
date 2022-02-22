@@ -74,8 +74,13 @@ abstract class ArtifactsReportTask : DefaultTask() {
       .filterNonGradle()
       .mapNotNull {
         try {
+          // TODO delete
+          // PhysicalArtifact.of(
+          //   componentIdentifier = it.id.componentIdentifier,
+          //   file = it.file
+          // )
           PhysicalArtifact.of(
-            componentIdentifier = it.id.componentIdentifier,
+            artifact = it,
             file = it.file
           )
         } catch (e: GradleException) {
